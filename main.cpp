@@ -24,7 +24,7 @@ public:
         // TODO: necessity?
         if (_fut.get() != 0)
         {
-            throw std::runtime_error("Something went drastically wrong");
+            throw std::runtime_error("Something went drastically wrong...");
         }
     }
     void SetTimeout(int timeout)
@@ -33,6 +33,7 @@ public:
     }
 
     // TODO: allow use of timer function with placeholders
+    // TODO: enable function return types for handles.
     template<typename... Args>
     void bind(void a(Args...), Args&&... args)
     {
