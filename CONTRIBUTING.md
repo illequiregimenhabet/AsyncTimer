@@ -1,5 +1,5 @@
 # Contributing to AsyncTimer
----
+
 ## General program layout:
 
  - `src/` - source files
