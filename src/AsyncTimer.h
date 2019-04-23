@@ -19,12 +19,12 @@
 
 #pragma once
 #include <future>
+#include <functional>
+#include <chrono>
+#include <mutex>
 
 namespace AST
 {
-
-#ifdef __linux
-
 	struct ParameterNest
 	{
 		std::function<void()> CallBack;
@@ -35,7 +35,7 @@ namespace AST
 			auto f = std::bind(func1, std::forward<Args>(args)...);
 			CallBack = [=]()
 			{
-				f();
+				f(); // goes out of scope?
 			};
 		}
 
@@ -44,46 +44,116 @@ namespace AST
 			CallBack();
 		}
 	};
-#endif
 
+	// TODO: refactor into different files.
+	// please note that this class does not make any attempt to avoid
+	// data-races and you must implement this functionality within the
+	// functions passed to it. This is due to the impossibility of us
+	// knowing what is in your function. If c++ has a way, make an issue.
 	class AsyncTimer
 	{
 	public:
+
 		AsyncTimer() = default;
-		~AsyncTimer();
 
-		AsyncTimer(const int timeout);
-
+		AsyncTimer(const int timeout)
+			: _timeout(std::chrono::milliseconds(timeout))
+		{
+		}
 		template<typename Duration>
-		AsyncTimer(Duration timeout);
+		AsyncTimer(Duration timeout)
+			: _timeout(std::chrono::duration_cast<decltype(_timeout)>(timeout))
+		{
+			_timeout = timeout;
+		}
 
 		template<typename Duration, typename... Args>
-		AsyncTimer(Duration timeout, void execute(Args...), Args ...args);
+		AsyncTimer(Duration timeout, void execute(Args...), Args ...args)
+			: _timeout(std::chrono::duration_cast<decltype(_timeout)>(timeout))
+		{
+			// store param-pack
+
+		}
+
+		~AsyncTimer()
+		{
+			_end = true; // stop the while(true) loop
+		}
 
 		template<typename Duration>
-		void SetTimeout(Duration timeout);
+		void SetTimeout(Duration timeout)
+		{
+			_timeout = std::chrono::duration_cast<decltype(_timeout)>(timeout);
+		}
 
-		void SetTimeout(const int timeout);
+		void SetTimeout(const int timeout)
+		{
+			_timeout = std::chrono::milliseconds(timeout);
+	}
 
-#ifdef __linux
 		// TODO: allow use of timer function with placeholders
 		// TODO: enable function return types for handles.
 		template<typename... Args>
-		void bind(void a(Args...), Args&&... args);
-#endif
+		void bind(void a(Args...), Args&&... args)
+		{
+			_boundFunction.Setup(a, std::forward<Args>(args)...);
+		}
+
+		void Run()
+		{
+			_fut = std::async(std::launch::async,
+				[&] {
+				while (true)
+				{
+					// check whether the main thread has been stopped
+					{
+						std::lock_guard<std::mutex> lock(_muStop);
+						if (_end)
+							break;
+					}
+					_boundFunction.Process();
+					std::this_thread::sleep_for(_timeout);
+				}
+				return 0;
+			}
+			);
+		}
+
 		// TODO: allow re-execution, and use with placeholders - latter is unlikely.
 		// TODO: allow the use of timer event information - which iteration etc.
 		template<typename... Args>
-		void Run(void execution(Args...), Args&&... args);
-
-		void Stop();
+		void Run(void execution(Args...), Args&&... args)
+		{
+			_fut = std::async(std::launch::async,
+				[&] {
+				_boundFunction.Setup(execution, std::forward<Args>(args)...);
+				while (true)
+				{
+					// check whether the main thread has been stopped
+					{
+						std::lock_guard<std::mutex> lock(_muStop);
+						if (_end)
+							break;
+					}
+					_boundFunction.Process();
+					std::this_thread::sleep_for(_timeout);
+				}
+				return 0;
+			}
+			);
+		}
+		void Stop()
+		{
+			{ // todo checking?
+				std::lock_guard<std::mutex> lock(_muStop);
+				_end = true;
+			}
+		}
 	private:
-		bool _end;
 		std::chrono::milliseconds _timeout;
 		std::mutex _muStop;
+		bool _end = false;
 		std::future<int> _fut; // type required, int is only a placement type.
-#ifdef __linux
 		struct ParameterNest _boundFunction;
-#endif
 	};
 }
